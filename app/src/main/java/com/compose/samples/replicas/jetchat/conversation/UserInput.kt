@@ -2,11 +2,18 @@ package com.compose.samples.replicas.jetchat.conversation
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,27 +22,42 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.paddingFrom
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AlternateEmail
+import androidx.compose.material.icons.outlined.Duo
+import androidx.compose.material.icons.outlined.InsertPhoto
+import androidx.compose.material.icons.outlined.Mood
+import androidx.compose.material.icons.outlined.Place
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -53,12 +75,15 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.SemanticsPropertyReceiver
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
@@ -119,8 +144,270 @@ fun UserInput(
         contentColor = MaterialTheme.colorScheme.secondary
     ) {
         Column(modifier = modifier) {
+            UserInputText(
+                onTextChanged = { textState = it },
+                textFieldValue = textState,
+                keyboardShown = currentInputSelector == InputSelector.NONE && textFieldFocusState,
+                onTextFieldFocused = { focused ->
+                    if(focused) {
+                        currentInputSelector = InputSelector.NONE
+                        resetScroll()
+                    }
+                    textFieldFocusState = focused
+                },
+                focusState = textFieldFocusState
+            )
 
+            UserInputSelector(
+                onSelectorChange = { currentInputSelector = it },
+                sendMessageEnabled = textState.text.isNotBlank(),
+                onMessageSent = {
+                    onMessageSent(textState.text)
+                    // Reset text field and close keyboard
+                    textState = TextFieldValue()
+                    // Move scroll to bottom
+                    resetScroll()
+                    dismissKeyboard()
+                },
+                currentInputSelector = currentInputSelector
+            )
+
+            SelectorExpanded(
+                onCloseRequested = dismissKeyboard,
+                onTextAdded = { textState = textState.addText(it) },
+                currentSelector = currentInputSelector
+            )
         }
+    }
+}
+
+private fun TextFieldValue.addText(newString: String): TextFieldValue {
+    val newText = this.text.replaceRange(
+        this.selection.start,
+        this.selection.end,
+        newString
+    )
+
+    val newSelection = TextRange(
+        start = newText.length,
+        end = newText.length
+    )
+
+    return this.copy(text = newText, selection = newSelection)
+}
+
+@Composable
+private fun SelectorExpanded(
+    currentSelector: InputSelector,
+    onCloseRequested: () -> Unit,
+    onTextAdded: (String) -> Unit
+) {
+    if(currentSelector == InputSelector.NONE) return
+
+    // Request focus to force the TextField to lose it
+    val focusRequester = FocusRequester()
+    
+    // If the selector is shown, always request focus to trigger a TextField.onFocusChange.
+    SideEffect {
+        if(currentSelector == InputSelector.EMOJI) {
+            focusRequester.requestFocus()
+        }
+    }
+
+    Surface(tonalElevation = 8.dp) {
+        when(currentSelector) {
+            InputSelector.EMOJI -> EmojiSelector(
+                onTextAdded = onTextAdded,
+                focusRequester = focusRequester
+            )
+            InputSelector.DM -> NotAvailablePopup(onCloseRequested)
+            InputSelector.PICTURE -> FunctionalityNotAvailablePanel()
+            InputSelector.MAP -> FunctionalityNotAvailablePanel()
+            InputSelector.PHONE -> FunctionalityNotAvailablePanel()
+            else -> {
+                throw NotImplementedError()
+            }
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun UserInputPreview() {
+    JetchatTheme {
+        Surface {
+            UserInput(onMessageSent = { })
+        }
+    }
+}
+
+@Composable
+fun FunctionalityNotAvailablePanel() {
+    AnimatedVisibility(
+        visibleState = remember {
+            MutableTransitionState(false).apply { targetState = true }
+        },
+        enter = expandHorizontally() + fadeIn(),
+        exit = shrinkHorizontally() + fadeOut()
+    ) {
+        Column(
+            modifier = Modifier
+                .height(320.dp)
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = stringResource(id = R.string.not_available),
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                text = stringResource(id = R.string.not_available_subtitle),
+                modifier = Modifier.paddingFrom(FirstBaseline, before = 32.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun UserInputSelector(
+    onSelectorChange: (InputSelector) -> Unit,
+    sendMessageEnabled: Boolean,
+    onMessageSent: () -> Unit,
+    currentInputSelector: InputSelector,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .height(72.dp)
+            .wrapContentHeight()
+            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        InputSelectorButton(
+            onClick = { onSelectorChange(InputSelector.EMOJI) },
+            icon = Icons.Outlined.Mood,
+            description = stringResource(id = R.string.emoji_selector_bt_desc),
+            selected = currentInputSelector == InputSelector.EMOJI
+        )
+
+        InputSelectorButton(
+            onClick = { onSelectorChange(InputSelector.DM) },
+            icon = Icons.Outlined.AlternateEmail,
+            selected = currentInputSelector == InputSelector.DM,
+            description = stringResource(id = R.string.dm_desc)
+        )
+
+        InputSelectorButton(
+            onClick = { onSelectorChange(InputSelector.PICTURE) },
+            icon = Icons.Outlined.InsertPhoto,
+            selected = currentInputSelector == InputSelector.PICTURE,
+            description = stringResource(id = R.string.attach_photo_desc)
+        )
+
+        InputSelectorButton(
+            onClick = { onSelectorChange(InputSelector.MAP) },
+            icon = Icons.Outlined.Place,
+            selected = currentInputSelector == InputSelector.MAP,
+            description = stringResource(id = R.string.map_selector_desc)
+        )
+
+        InputSelectorButton(
+            onClick = { onSelectorChange(InputSelector.PHONE) },
+            icon = Icons.Outlined.Duo,
+            selected = currentInputSelector == InputSelector.PHONE,
+            description = stringResource(id = R.string.videochat_desc)
+        )
+
+        val border = if (!sendMessageEnabled) {
+            BorderStroke(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+            )
+        } else {
+            null
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        val disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+
+        val buttonColors = ButtonDefaults.buttonColors(
+            disabledContainerColor = Color.Transparent,
+            disabledContentColor = disabledContentColor
+        )
+
+        // Send button
+        Button(
+            modifier = Modifier.height(36.dp),
+            enabled = sendMessageEnabled,
+            onClick = onMessageSent,
+            colors = buttonColors,
+            border = border,
+            contentPadding = PaddingValues(0.dp)
+        ) {
+            Text(
+                stringResource(id = R.string.send),
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
+    }
+}
+
+// @Preview
+@Composable
+fun UserInputSelectorPreview() {
+    JetchatTheme {
+        Surface {
+            UserInputSelector(
+                onSelectorChange = { },
+                sendMessageEnabled = true,
+                onMessageSent = { /*TODO*/ },
+                currentInputSelector = InputSelector.EMOJI
+            )
+        }
+    }
+}
+
+@Composable
+private fun InputSelectorButton(
+    onClick: () -> Unit,
+    icon: ImageVector,
+    description: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier
+) {
+
+    val backgroundModifier = if(selected) {
+        Modifier.background(
+            color = LocalContentColor.current,
+            shape = RoundedCornerShape(14.dp)
+        )
+    } else {
+        Modifier
+    }
+
+    IconButton(
+        onClick = onClick,
+        modifier = modifier.then(backgroundModifier)
+    ) {
+
+        val tint = if(selected) {
+            contentColorFor(backgroundColor = LocalContentColor.current)
+        } else {
+            LocalContentColor.current
+        }
+
+        Icon(
+            imageVector = icon,
+            tint = tint,
+            modifier = Modifier
+                .padding(8.dp)
+                .size(56.dp),
+            contentDescription = description
+        )
     }
 }
 
@@ -178,9 +465,24 @@ private fun UserInputText(
             }
         }
 
-//        RecordButton(
-//
-//        )
+        RecordButton(
+            recording = isRecordingMessage,
+            swipeOffset = { swipeOffset.floatValue },
+            onSwipeOffsetChange = { offset -> swipeOffset.floatValue = offset },
+            onStartRecording = {
+                val consumed = !isRecordingMessage
+                isRecordingMessage = true
+                consumed
+            },
+            onFinishRecording = {
+                // handle end of recording
+                isRecordingMessage = false
+            },
+            onCancelRecording = {
+                isRecordingMessage = false
+            },
+            modifier = Modifier.fillMaxHeight()
+        )
     }
 }
 
@@ -204,7 +506,7 @@ private fun BoxScope.UserInputTextField (
             .padding(start = 32.dp)
             .align(Alignment.CenterStart)
             .onFocusChanged { state ->
-                if(lastFocusState != state.isFocused) {
+                if (lastFocusState != state.isFocused) {
                     onTextFieldFocused(state.isFocused)
                 }
                 lastFocusState = state.isFocused
@@ -230,7 +532,7 @@ private fun BoxScope.UserInputTextField (
     }
 }
 
-@Preview()
+// @Preview
 @Composable
 fun UserInputTextPreview(
     resetScroll: () -> Unit = {},
